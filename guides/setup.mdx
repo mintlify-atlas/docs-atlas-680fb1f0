@@ -1,0 +1,240 @@
+---
+title: 'Setup'
+description: 'Install and run PostgreSQL Realtime Monitor'
+---
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed on your system:
+
+<CardGroup cols={2}>
+  <Card title="Bun Runtime" icon="bolt">
+    Install from [bun.sh](https://bun.sh)
+  </Card>
+  <Card title="Docker" icon="docker">
+    Required for running PostgreSQL
+  </Card>
+</CardGroup>
+
+## Installation
+
+<Steps>
+  <Step title="Clone the repository">
+    First, clone the PostgreSQL Realtime Monitor repository:
+    
+    ```bash
+    git clone <your-repository-url>
+    cd listen-postgres
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    Use Bun to install all required dependencies:
+    
+    ```bash
+    bun install
+    ```
+    
+    This will install the following key dependencies:
+    
+    - `postgres` - PostgreSQL client with logical replication support
+    - `react` & `react-dom` - Frontend UI framework
+    - `typescript` - Type-safe development
+  </Step>
+
+  <Step title="Start PostgreSQL with Docker">
+    The project includes a pre-configured Docker setup for PostgreSQL:
+    
+    ```bash
+    docker-compose up -d
+    ```
+    
+    This command will:
+    
+    - Pull the `postgres:16-alpine` image
+    - Create a container named `postgres-realtime`
+    - Enable logical replication with the following settings:
+      - `wal_level=logical`
+      - `max_wal_senders=10`
+      - `max_replication_slots=10`
+    - Expose PostgreSQL on port `5432`
+    - Create the `alltables` publication for change tracking
+    
+    <Note>
+      The database credentials are:
+      - Database: `appdb`
+      - User: `appuser`
+      - Password: `secret`
+    </Note>
+  </Step>
+
+  <Step title="Start the application">
+    Run the development server:
+    
+    ```bash
+    bun run dev
+    ```
+    
+    This starts the Bun server on port `3000` with:
+    
+    - WebSocket server at `ws://localhost:3000/ws`
+    - HTTP server at `http://localhost:3000`
+    - Hot Module Reloading (HMR) enabled
+    - PostgreSQL subscription active
+  </Step>
+
+  <Step title="Open in browser">
+    Navigate to [http://localhost:3000](http://localhost:3000) to access the monitoring dashboard.
+  </Step>
+</Steps>
+
+## Docker Configuration
+
+The `docker-compose.yml` file configures PostgreSQL with logical replication enabled:
+
+```yaml docker-compose.yml
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: postgres-realtime
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: appdb
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: secret
+    ports:
+      - "5432:5432"
+    command: >
+      postgres
+        -c wal_level=logical
+        -c max_wal_senders=10
+        -c max_replication_slots=10
+        -c max_connections=100
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+volumes:
+  db-data:
+```
+
+### Understanding the Configuration
+
+<AccordionGroup>
+  <Accordion title="Logical Replication Settings">
+    - **wal_level=logical**: Enables logical decoding required for change data capture
+    - **max_wal_senders=10**: Allows up to 10 concurrent replication connections
+    - **max_replication_slots=10**: Maximum number of replication slots
+  </Accordion>
+
+  <Accordion title="Initialization Script">
+    The `init.sql` file runs on first startup and creates the publication:
+    
+    ```sql init.sql
+    CREATE PUBLICATION alltables FOR ALL TABLES;
+    ```
+    
+    This publication allows the application to subscribe to changes on all tables.
+  </Accordion>
+
+  <Accordion title="Data Persistence">
+    The `db-data` volume ensures your database persists between container restarts:
+    
+    ```bash
+    # To reset the database, remove the volume
+    docker-compose down -v
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Testing Your Setup
+
+Verify that everything is working by creating a test table and inserting data:
+
+<Steps>
+  <Step title="Connect to PostgreSQL">
+    ```bash
+    docker exec -it postgres-realtime psql -U appuser -d appdb
+    ```
+  </Step>
+
+  <Step title="Create a test table">
+    ```sql
+    CREATE TABLE todos (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      done BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    ```
+  </Step>
+
+  <Step title="Insert test data">
+    ```sql
+    INSERT INTO todos (title) VALUES ('Test task 1');
+    INSERT INTO todos (title) VALUES ('Test task 2');
+    ```
+    
+    You should see these changes appear in real-time in your browser!
+  </Step>
+
+  <Step title="Test updates and deletes">
+    ```sql
+    UPDATE todos SET done = true WHERE id = 1;
+    DELETE FROM todos WHERE id = 2;
+    ```
+    
+    All operations will be captured and displayed live.
+  </Step>
+</Steps>
+
+<Warning>
+  Changes are stored in memory and will be lost when the server restarts. This is intentional for the monitoring use case.
+</Warning>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Port 5432 already in use">
+    If you have another PostgreSQL instance running, either:
+    
+    1. Stop the existing instance
+    2. Modify the port mapping in `docker-compose.yml`:
+    
+    ```yaml
+    ports:
+      - "5433:5432"  # Use port 5433 on host
+    ```
+    
+    Then update `db.ts` to match:
+    
+    ```typescript
+    const DB_PORT = 5433
+    ```
+  </Accordion>
+
+  <Accordion title="WebSocket connection failed">
+    Ensure the server is running on port 3000 and check the browser console for errors. The frontend automatically attempts to reconnect if the connection is lost.
+  </Accordion>
+
+  <Accordion title="No changes appearing">
+    Verify that:
+    
+    1. The `alltables` publication exists: `\dRp+` in psql
+    2. Logical replication is enabled: `SHOW wal_level;` should return `logical`
+    3. The server console shows "✅ Realtime subscription ready"
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Learn how to customize database settings and server options
+  </Card>
+  <Card title="Usage" icon="book" href="/guides/usage">
+    Explore real-time monitoring features and workflows
+  </Card>
+</CardGroup>

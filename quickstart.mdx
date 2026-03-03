@@ -1,80 +1,413 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get PostgreSQL Realtime Monitor running in under 5 minutes
 ---
 
-## Get started in three steps
+## Overview
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+This guide will help you set up PostgreSQL Realtime Monitor from scratch. You'll have a working real-time database monitor with a React frontend in just a few steps.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  Make sure you have [Bun](https://bun.sh) and [Docker](https://docker.com) installed before starting.
 </Note>
+
+## Installation
+
+<Steps>
+  <Step title="Install Dependencies">
+    Install all required packages using Bun:
+
+    ```bash
+    bun install
+    ```
+
+    This installs:
+    - `postgres` - PostgreSQL client with logical replication support
+    - `react` & `react-dom` - UI framework (v19.2.0)
+    - `typescript` - Type safety and developer experience
+  </Step>
+
+  <Step title="Start PostgreSQL">
+    Launch PostgreSQL with Docker Compose. This starts a PostgreSQL 16 instance with logical replication enabled:
+
+    ```bash
+    docker-compose up -d
+    ```
+
+    The database starts with:
+    - **Host:** `localhost:5432`
+    - **Database:** `appdb`
+    - **User:** `appuser`
+    - **Password:** `secret`
+    - **Logical Replication:** Enabled (`wal_level=logical`)
+    - **Publication:** `alltables` (created automatically via `init.sql`)
+
+    <Accordion title="View Docker Compose Configuration">
+      ```yaml docker-compose.yml
+      version: "3.9"
+
+      services:
+        db:
+          image: postgres:16-alpine
+          container_name: postgres-realtime
+          restart: unless-stopped
+          environment:
+            POSTGRES_DB: appdb
+            POSTGRES_USER: appuser
+            POSTGRES_PASSWORD: secret
+          ports:
+            - "5432:5432"
+          command: >
+            postgres
+              -c wal_level=logical
+              -c max_wal_senders=10
+              -c max_replication_slots=10
+              -c max_connections=100
+          volumes:
+            - db-data:/var/lib/postgresql/data
+            - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      ```
+    </Accordion>
+  </Step>
+
+  <Step title="Start the Application">
+    Run the Bun development server:
+
+    ```bash
+    bun run dev
+    ```
+
+    This starts:
+    - **HTTP Server** on `http://localhost:3000`
+    - **WebSocket Server** on `ws://localhost:3000/ws`
+    - **Hot Module Reloading** for React components
+
+    You should see output like:
+    ```
+    🚀 Server running at http://localhost:3000
+    📡 WebSocket available at ws://localhost:3000/ws
+    ✅ Realtime subscription ready (connected or reconnected)
+    ```
+  </Step>
+
+  <Step title="Open in Browser">
+    Navigate to [http://localhost:3000](http://localhost:3000)
+
+    You'll see:
+    - A connection status indicator (should show "Connected")
+    - An empty table waiting for database changes
+    - Total changes counter at 0
+  </Step>
+</Steps>
+
+## Testing Real-time Updates
+
+Now let's see the real-time monitoring in action by making database changes.
+
+<Steps>
+  <Step title="Connect to PostgreSQL">
+    Open a new terminal and connect to the running PostgreSQL container:
+
+    ```bash
+    docker exec -it postgres-realtime psql -U appuser -d appdb
+    ```
+
+    You should see the PostgreSQL prompt:
+    ```
+    psql (16.x)
+    Type "help" for help.
+
+    appdb=#
+    ```
+  </Step>
+
+  <Step title="Create a Test Table">
+    Create a simple todos table:
+
+    ```sql
+    CREATE TABLE todos (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      done BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    ```
+
+    <Note>
+      Watch your browser - the table columns will automatically appear once you insert data!
+    </Note>
+  </Step>
+
+  <Step title="Insert Data">
+    Add some todo items and watch them appear instantly in the browser:
+
+    ```sql
+    INSERT INTO todos (title) VALUES ('Build real-time monitor');
+    INSERT INTO todos (title) VALUES ('Write documentation');
+    INSERT INTO todos (title) VALUES ('Deploy to production');
+    ```
+
+    Each INSERT operation will:
+    - Appear in the browser immediately
+    - Show operation type as **INSERT** (green badge)
+    - Display all column values including auto-generated `id` and `created_at`
+    - Increment the total changes counter
+  </Step>
+
+  <Step title="Update and Delete">
+    Try UPDATE and DELETE operations:
+
+    ```sql
+    -- Mark a todo as done (UPDATE shows in blue)
+    UPDATE todos SET done = true WHERE id = 1;
+
+    -- Delete a todo (DELETE shows in red)
+    DELETE FROM todos WHERE id = 3;
+    ```
+
+    Watch how:
+    - **UPDATE** operations show in blue badges
+    - **DELETE** operations show in red badges
+    - All changes appear instantly without page refresh
+  </Step>
+</Steps>
+
+## Understanding the Architecture
+
+Here's how the system captures and streams changes:
+
+<CodeGroup>
+
+```typescript db.ts
+import postgres from "postgres"
+
+const sql = postgres({
+    host: 'localhost',
+    port: 5432,
+    database: 'appdb',
+    username: 'appuser',
+    password: 'secret',
+    publications: 'alltables', // Subscribe to all tables
+})
+```
+
+```typescript src/index.ts
+// Subscribe to all PostgreSQL changes
+const { unsubscribe } = await sql.subscribe(
+  "*", // pattern: all operations and tables
+  (row, { command, relation }) => {
+    const tableName = typeof relation === "string"
+      ? relation
+      : `${relation.schema || "public"}.${relation.table}`;
+
+    const changes = Array.isArray(row) ? row : [row];
+    const newChanges = changes.map((r) => ({
+      operation: command.toUpperCase(),
+      table: tableName,
+      ...r,
+    }));
+
+    // Broadcast to all WebSocket clients
+    broadcast({
+      type: "change",
+      data: newChanges,
+      total: allChanges.length,
+    });
+  }
+);
+```
+
+```typescript App.tsx
+// React component handles WebSocket connection
+useEffect(() => {
+  const ws = new WebSocket("ws://localhost:3000/ws");
+
+  ws.onmessage = (event) => {
+    const message = JSON.parse(event.data);
+
+    if (message.type === "initial") {
+      // Load existing changes on connect
+      setChanges(message.data);
+    } else if (message.type === "change") {
+      // Append new changes
+      setChanges((prev) => [...prev, ...message.data]);
+    }
+  };
+
+  ws.onclose = () => {
+    // Auto-reconnect after 3 seconds
+    setTimeout(() => connect(), 3000);
+  };
+}, []);
+```
+
+</CodeGroup>
+
+## Interactive Features
+
+The React frontend includes powerful table features:
+
+<AccordionGroup>
+  <Accordion title="Column Sorting">
+    Click any column header to sort:
+    - First click: Sort ascending ↑
+    - Second click: Sort descending ↓
+    - Third click: Remove sorting
+
+    Supports intelligent sorting for:
+    - Numbers (numeric comparison)
+    - Dates (timestamp comparison)
+    - Strings (alphabetical)
+  </Accordion>
+
+  <Accordion title="Column Filtering">
+    Each column has a filter input below the header:
+    - Type to filter rows matching that column
+    - Multiple filters work together (AND logic)
+    - Case-insensitive matching
+    - Active filters show count and clear button
+  </Accordion>
+
+  <Accordion title="Dynamic Columns">
+    The table automatically detects columns from your data:
+    - No configuration needed
+    - Works with any table structure
+    - Columns appear as data arrives
+  </Accordion>
+
+  <Accordion title="Operation Colors">
+    Operations are color-coded for quick identification:
+    - **INSERT**: Green (#10b981)
+    - **UPDATE**: Blue (#3b82f6)
+    - **DELETE**: Red (#ef4444)
+  </Accordion>
+</AccordionGroup>
+
+## API Endpoints
+
+The server exposes two endpoints:
+
+<CodeGroup>
+
+```bash REST API
+# Get all accumulated changes
+curl http://localhost:3000/api/changes
+```
+
+```javascript WebSocket
+// Connect to WebSocket for real-time updates
+const ws = new WebSocket('ws://localhost:3000/ws');
+
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  
+  // message.type: "initial" | "change"
+  // message.data: Array<Change>
+  // message.total: number
+};
+```
+
+</CodeGroup>
+
+## Configuration
+
+To connect to a different PostgreSQL instance, edit `db.ts`:
+
+```typescript db.ts
+export const sql = postgres({
+    host: 'your-host',
+    port: 5432,
+    database: 'your-database',
+    username: 'your-user',
+    password: 'your-password',
+    publications: 'alltables',
+})
+```
+
+<Warning>
+  Your PostgreSQL instance must have:
+  - `wal_level=logical` in postgresql.conf
+  - A publication created: `CREATE PUBLICATION alltables FOR ALL TABLES;`
+</Warning>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="WebSocket shows 'Disconnected'">
+    Check that the Bun server is running:
+    ```bash
+    bun run dev
+    ```
+
+    Verify the server started successfully and shows:
+    ```
+    ✅ Realtime subscription ready (connected or reconnected)
+    ```
+  </Accordion>
+
+  <Accordion title="No changes appearing">
+    Ensure PostgreSQL is configured correctly:
+    ```sql
+    -- Check wal_level
+    SHOW wal_level; -- Should be 'logical'
+
+    -- Check publication exists
+    SELECT * FROM pg_publication;
+    ```
+
+    If the publication is missing:
+    ```sql
+    CREATE PUBLICATION alltables FOR ALL TABLES;
+    ```
+  </Accordion>
+
+  <Accordion title="Port 3000 already in use">
+    Change the port in `src/index.ts`:
+    ```typescript
+    const server = serve({
+      port: 3001, // Change to any available port
+      // ...
+    });
+    ```
+
+    Update the WebSocket URL in `src/App.tsx` to match:
+    ```typescript
+    const ws = new WebSocket("ws://localhost:3001/ws");
+    ```
+  </Accordion>
+
+  <Accordion title="Docker container won't start">
+    Check if port 5432 is already in use:
+    ```bash
+    lsof -i :5432
+    ```
+
+    To use a different port, edit `docker-compose.yml`:
+    ```yaml
+    ports:
+      - "5433:5432"  # Host:Container
+    ```
+
+    Then update `db.ts` accordingly:
+    ```typescript
+    port: 5433,
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture Deep Dive" icon="diagram-project" href="/architecture/overview">
+    Learn how the real-time system works under the hood
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/websocket">
+    Explore WebSocket messages and REST endpoints
+  </Card>
+  <Card title="Configuration Guide" icon="gear" href="/guides/configuration">
+    Customize database connections and server settings
+  </Card>
+  <Card title="Usage Examples" icon="book" href="/guides/usage">
+    Learn common workflows and usage patterns
+  </Card>
+</CardGroup>

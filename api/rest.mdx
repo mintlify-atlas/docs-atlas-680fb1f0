@@ -1,0 +1,412 @@
+---
+title: "REST API"
+description: "HTTP REST API for retrieving PostgreSQL database changes"
+---
+
+## Overview
+
+The REST API provides a simple HTTP endpoint to retrieve all accumulated database changes. This is useful for initial page loads, polling-based implementations, or when WebSocket connections are not feasible.
+
+## Endpoints
+
+### GET /api/changes
+
+Retrieve all database changes that have been captured since the server started.
+
+```bash
+curl http://localhost:3000/api/changes
+```
+
+<ParamField query="None" type="void">
+  This endpoint accepts no query parameters. It returns all accumulated changes.
+</ParamField>
+
+#### Response
+
+<ResponseField name="Response" type="Change[]">
+  Array of all database change objects in chronological order.
+</ResponseField>
+
+```typescript
+type Change = {
+  operation: string;
+  table: string;
+  [key: string]: any;
+};
+```
+
+#### Response Fields
+
+<Expandable title="Change Object Structure">
+  <ResponseField name="operation" type="string" required>
+    The database operation: `INSERT`, `UPDATE`, or `DELETE`
+  </ResponseField>
+
+  <ResponseField name="table" type="string" required>
+    Fully qualified table name (e.g., `public.users`)
+  </ResponseField>
+
+  <ResponseField name="[column]" type="any">
+    All columns from the affected row are included as properties
+  </ResponseField>
+</Expandable>
+
+## Request Examples
+
+### Using cURL
+
+```bash
+curl http://localhost:3000/api/changes
+```
+
+### Using fetch (JavaScript)
+
+```javascript
+fetch("http://localhost:3000/api/changes")
+  .then(response => response.json())
+  .then(changes => {
+    console.log("All changes:", changes);
+  })
+  .catch(error => {
+    console.error("Error fetching changes:", error);
+  });
+```
+
+### Using axios
+
+```javascript
+import axios from 'axios';
+
+const response = await axios.get('http://localhost:3000/api/changes');
+const changes = response.data;
+```
+
+### Using TypeScript
+
+```typescript
+interface Change {
+  operation: string;
+  table: string;
+  [key: string]: any;
+}
+
+async function fetchChanges(): Promise<Change[]> {
+  const response = await fetch('http://localhost:3000/api/changes');
+  
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+  
+  return await response.json();
+}
+
+// Usage
+const changes = await fetchChanges();
+console.log(`Retrieved ${changes.length} changes`);
+```
+
+## Response Examples
+
+### Empty Response
+
+When no database changes have occurred:
+
+```json
+[]
+```
+
+### Single Change
+
+```json
+[
+  {
+    "operation": "INSERT",
+    "table": "public.users",
+    "id": 1,
+    "name": "John Doe",
+    "email": "john@example.com",
+    "created_at": "2026-03-03T10:30:00Z"
+  }
+]
+```
+
+### Multiple Changes
+
+```json
+[
+  {
+    "operation": "INSERT",
+    "table": "public.users",
+    "id": 1,
+    "name": "John Doe",
+    "email": "john@example.com",
+    "created_at": "2026-03-03T10:30:00Z"
+  },
+  {
+    "operation": "UPDATE",
+    "table": "public.products",
+    "id": 42,
+    "name": "Widget Pro",
+    "price": 39.99,
+    "updated_at": "2026-03-03T11:15:00Z"
+  },
+  {
+    "operation": "DELETE",
+    "table": "public.old_records",
+    "id": 99,
+    "deleted_at": "2026-03-03T12:00:00Z"
+  }
+]
+```
+
+### Response with Various Data Types
+
+```json
+[
+  {
+    "operation": "INSERT",
+    "table": "public.orders",
+    "id": 123,
+    "user_id": 1,
+    "amount": 99.99,
+    "status": "pending",
+    "items": 5,
+    "is_paid": false,
+    "created_at": "2026-03-03T12:30:00Z",
+    "metadata": null
+  }
+]
+```
+
+## Response Headers
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: 1234
+```
+
+<ResponseField name="Content-Type" type="string">
+  Always `application/json` for successful responses
+</ResponseField>
+
+<ResponseField name="Content-Length" type="number">
+  Size of the response body in bytes
+</ResponseField>
+
+## Status Codes
+
+<ResponseField name="200" type="OK">
+  Successful request. Returns array of changes (may be empty).
+</ResponseField>
+
+<ResponseField name="500" type="Internal Server Error">
+  Server error occurred while processing the request.
+</ResponseField>
+
+## Server Implementation
+
+The endpoint is implemented in the Bun server:
+
+```typescript
+// Accumulative array for all changes
+const allChanges: Array<Record<string, any>> = [];
+
+const server = serve({
+  async fetch(req, server) {
+    const url = new URL(req.url);
+
+    // API endpoint
+    if (url.pathname === "/api/changes") {
+      return Response.json(allChanges);
+    }
+
+    return undefined;
+  },
+});
+```
+
+<Note>
+  The `allChanges` array accumulates changes in memory. It persists for the lifetime of the server process but is reset when the server restarts.
+</Note>
+
+## Data Persistence
+
+<Warning>
+  Changes are stored in-memory only. When the server restarts, the changes array is reset to empty. For persistent storage, you would need to implement a database or file-based storage solution.
+</Warning>
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Initial Data Load" icon="download">
+    Fetch all changes when your application first loads before establishing a WebSocket connection.
+  </Card>
+  
+  <Card title="Polling" icon="clock">
+    Periodically poll this endpoint if WebSocket connections are not available in your environment.
+  </Card>
+  
+  <Card title="Data Export" icon="file-export">
+    Export changes for analysis, logging, or integration with other systems.
+  </Card>
+  
+  <Card title="Debugging" icon="bug">
+    Quickly check what changes have been captured during development and testing.
+  </Card>
+</CardGroup>
+
+## Polling Implementation
+
+If you need to use polling instead of WebSockets:
+
+```javascript
+let previousLength = 0;
+
+async function pollChanges() {
+  try {
+    const response = await fetch('http://localhost:3000/api/changes');
+    const changes = await response.json();
+    
+    // Check if new changes arrived
+    if (changes.length > previousLength) {
+      const newChanges = changes.slice(previousLength);
+      console.log('New changes:', newChanges);
+      previousLength = changes.length;
+    }
+  } catch (error) {
+    console.error('Polling error:', error);
+  }
+}
+
+// Poll every 5 seconds
+setInterval(pollChanges, 5000);
+```
+
+<Info>
+  While polling works, WebSocket connections provide better performance and lower latency for real-time updates. Use the REST API primarily for initial loads or environments where WebSockets are restricted.
+</Info>
+
+## Combining REST and WebSocket
+
+Best practice is to use both APIs together:
+
+```typescript
+async function initializeApp() {
+  // 1. Load initial data via REST
+  const response = await fetch('http://localhost:3000/api/changes');
+  const initialChanges = await response.json();
+  setChanges(initialChanges);
+  
+  // 2. Connect WebSocket for real-time updates
+  const ws = new WebSocket('ws://localhost:3000/ws');
+  
+  ws.onmessage = (event) => {
+    const message = JSON.parse(event.data);
+    
+    // Skip initial message since we already loaded via REST
+    if (message.type === 'change') {
+      setChanges(prev => [...prev, ...message.data]);
+    }
+  };
+}
+```
+
+## Performance Considerations
+
+<AccordionGroup>
+  <Accordion title="Memory Usage">
+    The in-memory array grows with each database change. Monitor memory usage if expecting high-volume changes. Consider implementing pagination or size limits for production use.
+  </Accordion>
+  
+  <Accordion title="Response Size">
+    Response size increases linearly with the number of changes. For large datasets, consider:
+    - Implementing pagination with query parameters
+    - Adding filters by table or operation type
+    - Limiting the time range of returned changes
+  </Accordion>
+  
+  <Accordion title="Caching">
+    This endpoint returns dynamic data that changes frequently. Avoid aggressive caching. If caching, use very short TTL values (seconds, not minutes).
+  </Accordion>
+</AccordionGroup>
+
+## Error Handling
+
+```typescript
+async function fetchChangesWithErrorHandling() {
+  try {
+    const response = await fetch('http://localhost:3000/api/changes');
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const changes = await response.json();
+    return changes;
+    
+  } catch (error) {
+    if (error instanceof TypeError) {
+      console.error('Network error:', error);
+      // Handle network issues
+    } else {
+      console.error('Unexpected error:', error);
+    }
+    
+    return [];
+  }
+}
+```
+
+## CORS Configuration
+
+<Note>
+  The server runs on `localhost:3000` by default. If your frontend runs on a different port, you may need to configure CORS headers.
+</Note>
+
+For cross-origin requests, modify the server response:
+
+```typescript
+if (url.pathname === "/api/changes") {
+  return new Response(JSON.stringify(allChanges), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    },
+  });
+}
+```
+
+## Testing the Endpoint
+
+### Check Server Status
+
+```bash
+# Verify the endpoint is accessible
+curl -I http://localhost:3000/api/changes
+```
+
+### Format JSON Output
+
+```bash
+# Pretty-print JSON response
+curl http://localhost:3000/api/changes | json_pp
+
+# Or with jq
+curl http://localhost:3000/api/changes | jq '.'
+```
+
+### Count Changes
+
+```bash
+# Count number of changes
+curl -s http://localhost:3000/api/changes | jq 'length'
+```
+
+### Filter by Operation
+
+```bash
+# Get only INSERT operations
+curl -s http://localhost:3000/api/changes | jq '[.[] | select(.operation == "INSERT")]'
+```

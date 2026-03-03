@@ -1,0 +1,387 @@
+---
+title: 'Configuration'
+description: 'Configure database connections, server settings, and monitoring options'
+---
+
+## Database Configuration
+
+The database configuration is defined in `db.ts` in the project root.
+
+### Connection Settings
+
+```typescript db.ts
+import postgres from "postgres"
+
+const DB_HOST = 'localhost'
+const DB_PORT = 5432
+const DB_NAME = 'appdb'
+const DB_USER = 'appuser'
+const DB_PASSWORD = 'secret'
+
+export const sql = postgres({
+    host: DB_HOST,
+    port: DB_PORT,
+    database: DB_NAME,
+    username: DB_USER,
+    password: DB_PASSWORD,
+    publications: 'alltables', // Critical for change tracking
+})
+```
+
+### Configuration Options
+
+<ParamField path="DB_HOST" type="string" default="localhost">
+  The hostname or IP address of the PostgreSQL server.
+  
+  **Example for remote server:**
+  ```typescript
+  const DB_HOST = 'postgres.example.com'
+  ```
+</ParamField>
+
+<ParamField path="DB_PORT" type="number" default="5432">
+  The port on which PostgreSQL is listening.
+  
+  **Example for custom port:**
+  ```typescript
+  const DB_PORT = 5433
+  ```
+</ParamField>
+
+<ParamField path="DB_NAME" type="string" default="appdb">
+  The name of the database to connect to.
+  
+  <Note>
+    This database must have logical replication enabled and contain the required publication.
+  </Note>
+</ParamField>
+
+<ParamField path="DB_USER" type="string" default="appuser">
+  The PostgreSQL user for authentication.
+  
+  **Required privileges:**
+  - `SELECT` on all monitored tables
+  - `REPLICATION` privilege for logical replication
+</ParamField>
+
+<ParamField path="DB_PASSWORD" type="string" default="secret">
+  The password for the PostgreSQL user.
+  
+  <Warning>
+    In production, use environment variables instead of hardcoded credentials.
+  </Warning>
+</ParamField>
+
+<ParamField path="publications" type="string" default="alltables">
+  The PostgreSQL publication to subscribe to for change tracking.
+  
+  This must match the publication created in your database:
+  ```sql
+  CREATE PUBLICATION alltables FOR ALL TABLES;
+  ```
+</ParamField>
+
+## Server Configuration
+
+The server configuration is located in `src/index.ts`.
+
+### Port and Development Settings
+
+```typescript src/index.ts
+const server = serve({
+  port: 3000,
+  // ... other options
+  
+  development: process.env.NODE_ENV !== "production" && {
+    // Enable browser hot reloading in development
+    hmr: true,
+
+    // Echo console logs from the browser to the server
+    console: true,
+  },
+})
+```
+
+<ParamField path="port" type="number" default="3000">
+  The port on which the HTTP/WebSocket server listens.
+  
+  **To change the port:**
+  ```typescript
+  const server = serve({
+    port: 8080,
+    // ...
+  })
+  ```
+</ParamField>
+
+<ParamField path="development.hmr" type="boolean" default="true">
+  Enables Hot Module Reloading for the React frontend.
+  
+  Automatically disabled in production (`NODE_ENV=production`).
+</ParamField>
+
+<ParamField path="development.console" type="boolean" default="true">
+  When enabled, browser console logs are echoed to the server terminal.
+  
+  Useful for debugging frontend issues.
+</ParamField>
+
+### WebSocket Configuration
+
+The WebSocket server is configured with handlers for connection lifecycle:
+
+```typescript src/index.ts
+websocket: {
+  message(ws: any, message: string | Buffer) {
+    console.log("Message received:", message);
+  },
+  open(ws: any) {
+    clients.add(ws);
+    console.log("WebSocket client connected. Total:", clients.size);
+
+    // Send all existing changes to the new client
+    if (allChanges.length > 0) {
+      ws.send(
+        JSON.stringify({
+          type: "initial",
+          data: allChanges,
+        })
+      );
+    }
+  },
+  close(ws: any) {
+    clients.delete(ws);
+    console.log("WebSocket client disconnected. Total:", clients.size);
+  },
+}
+```
+
+<AccordionGroup>
+  <Accordion title="message handler">
+    Handles incoming messages from WebSocket clients.
+    
+    Currently logs messages to the console. Extend this to handle client commands:
+    
+    ```typescript
+    message(ws: any, message: string | Buffer) {
+      const data = JSON.parse(message.toString());
+      if (data.type === 'clear') {
+        allChanges.length = 0;
+        broadcast({ type: 'cleared' });
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="open handler">
+    Called when a new WebSocket client connects.
+    
+    - Adds the client to the active clients set
+    - Sends all accumulated changes to catch up the new client
+    - Logs the total number of connected clients
+  </Accordion>
+
+  <Accordion title="close handler">
+    Called when a WebSocket client disconnects.
+    
+    - Removes the client from the active clients set
+    - Logs the remaining number of connected clients
+  </Accordion>
+</AccordionGroup>
+
+## PostgreSQL Subscription
+
+The subscription configuration determines what changes are captured:
+
+```typescript src/index.ts
+const { unsubscribe } = await sql.subscribe(
+  "*", // pattern: all (all operations and tables)
+  (row, { command, relation }) => {
+    // Change handler
+    const tableName =
+      typeof relation === "string"
+        ? relation
+        : relation?.table
+          ? `${relation.schema || "public"}.${relation.table}`
+          : JSON.stringify(relation);
+
+    const rows = Array.isArray(row) ? row : [row];
+    const newChanges = rows.map((r) => ({
+      operation: command.toUpperCase(),
+      table: tableName,
+      ...r,
+    }));
+
+    allChanges.push(...newChanges);
+    broadcast({
+      type: "change",
+      data: newChanges,
+      total: allChanges.length,
+    });
+
+    console.log(
+      `📊 Change detected: ${command.toUpperCase()} on ${tableName}`
+    );
+  },
+  () => {
+    console.log("✅ Realtime subscription ready (connected or reconnected)");
+  }
+);
+```
+
+### Subscription Pattern
+
+<Tabs>
+  <Tab title="All Tables">
+    Monitor all tables in all schemas:
+    
+    ```typescript
+    await sql.subscribe("*", changeHandler, readyHandler)
+    ```
+  </Tab>
+  
+  <Tab title="Specific Table">
+    Monitor a specific table:
+    
+    ```typescript
+    await sql.subscribe("public.users", changeHandler, readyHandler)
+    ```
+  </Tab>
+  
+  <Tab title="Schema Pattern">
+    Monitor all tables in a schema:
+    
+    ```typescript
+    await sql.subscribe("public.*", changeHandler, readyHandler)
+    ```
+  </Tab>
+  
+  <Tab title="Multiple Tables">
+    Monitor specific tables:
+    
+    ```typescript
+    await sql.subscribe("public.{users,orders,products}", changeHandler, readyHandler)
+    ```
+  </Tab>
+</Tabs>
+
+### Captured Operations
+
+The subscription captures the following operations:
+
+- **INSERT**: New rows added to tables
+- **UPDATE**: Existing rows modified
+- **DELETE**: Rows removed from tables
+
+<Note>
+  **TRUNCATE** operations may not be captured depending on your PostgreSQL version and publication settings.
+</Note>
+
+## API Endpoints
+
+The server exposes two endpoints:
+
+### GET /api/changes
+
+Returns all accumulated changes since server start.
+
+```typescript src/index.ts
+if (url.pathname === "/api/changes") {
+  return Response.json(allChanges);
+}
+```
+
+**Response format:**
+```json
+[
+  {
+    "operation": "INSERT",
+    "table": "public.todos",
+    "id": 1,
+    "title": "Test task",
+    "done": false,
+    "created_at": "2026-03-03T10:30:00Z"
+  }
+]
+```
+
+### WS /ws
+
+WebSocket endpoint for real-time change notifications.
+
+**Message types:**
+
+<CodeGroup>
+```json Initial State
+{
+  "type": "initial",
+  "data": [/* all changes */]
+}
+```
+
+```json Change Notification
+{
+  "type": "change",
+  "data": [/* new changes */],
+  "total": 42
+}
+```
+</CodeGroup>
+
+## Environment Variables
+
+For production deployments, use environment variables instead of hardcoded values:
+
+```typescript db.ts
+const DB_HOST = process.env.DB_HOST || 'localhost'
+const DB_PORT = parseInt(process.env.DB_PORT || '5432')
+const DB_NAME = process.env.DB_NAME || 'appdb'
+const DB_USER = process.env.DB_USER || 'appuser'
+const DB_PASSWORD = process.env.DB_PASSWORD || 'secret'
+```
+
+Then run with:
+
+```bash
+DB_HOST=prod-db.example.com \
+DB_USER=monitor_user \
+DB_PASSWORD=secure_password \
+bun run dev
+```
+
+<Warning>
+  Never commit credentials to version control. Use `.env` files (and add them to `.gitignore`) or a secrets management system.
+</Warning>
+
+## TypeScript Configuration
+
+The project uses strict TypeScript settings in `tsconfig.json`:
+
+```json tsconfig.json
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "target": "esnext",
+    "types": ["bun-types"],
+    "strict": true,
+    "jsx": "react-jsx",
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  }
+}
+```
+
+These settings ensure type safety and catch potential errors at compile time.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Setup" icon="rocket" href="/guides/setup">
+    Return to the setup guide
+  </Card>
+  <Card title="Usage" icon="book" href="/guides/usage">
+    Learn how to use the monitoring dashboard
+  </Card>
+</CardGroup>

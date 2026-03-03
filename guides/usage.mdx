@@ -1,0 +1,452 @@
+---
+title: 'Usage'
+description: 'Monitor PostgreSQL changes in real-time and explore usage patterns'
+---
+
+## Overview
+
+PostgreSQL Realtime Monitor provides a live view of all database changes through a WebSocket-powered dashboard. Changes are captured using PostgreSQL's logical replication feature and broadcast to all connected clients.
+
+## Starting the Monitor
+
+<Steps>
+  <Step title="Start PostgreSQL">
+    ```bash
+    docker-compose up -d
+    ```
+  </Step>
+
+  <Step title="Start the server">
+    ```bash
+    bun run dev
+    ```
+    
+    You should see:
+    ```
+    🚀 Server running at http://localhost:3000
+    📡 WebSocket available at ws://localhost:3000/ws
+    ✅ Realtime subscription ready (connected or reconnected)
+    ```
+  </Step>
+
+  <Step title="Open the dashboard">
+    Navigate to [http://localhost:3000](http://localhost:3000)
+  </Step>
+</Steps>
+
+## Dashboard Features
+
+The monitoring dashboard provides:
+
+<CardGroup cols={2}>
+  <Card title="Real-time Updates" icon="bolt">
+    Changes appear instantly as they occur in the database
+  </Card>
+  <Card title="Sortable Columns" icon="arrow-down-a-z">
+    Click column headers to sort by operation, table, or any field
+  </Card>
+  <Card title="Filtering" icon="filter">
+    Filter changes by operation type, table name, or data values
+  </Card>
+  <Card title="Dark Theme" icon="moon">
+    Modern, eye-friendly interface for long monitoring sessions
+  </Card>
+</CardGroup>
+
+## Monitoring Database Changes
+
+All database operations are automatically captured and displayed:
+
+### INSERT Operations
+
+When new rows are inserted:
+
+```sql
+INSERT INTO todos (title) VALUES ('Buy groceries');
+```
+
+The dashboard shows:
+
+```json
+{
+  "operation": "INSERT",
+  "table": "public.todos",
+  "id": 1,
+  "title": "Buy groceries",
+  "done": false,
+  "created_at": "2026-03-03T10:30:00Z"
+}
+```
+
+### UPDATE Operations
+
+When rows are modified:
+
+```sql
+UPDATE todos SET done = true WHERE id = 1;
+```
+
+The dashboard shows the updated row with all current values:
+
+```json
+{
+  "operation": "UPDATE",
+  "table": "public.todos",
+  "id": 1,
+  "title": "Buy groceries",
+  "done": true,
+  "created_at": "2026-03-03T10:30:00Z"
+}
+```
+
+### DELETE Operations
+
+When rows are deleted:
+
+```sql
+DELETE FROM todos WHERE id = 1;
+```
+
+The dashboard shows the deleted row data:
+
+```json
+{
+  "operation": "DELETE",
+  "table": "public.todos",
+  "id": 1,
+  "title": "Buy groceries",
+  "done": true,
+  "created_at": "2026-03-03T10:30:00Z"
+}
+```
+
+## Working with Multiple Tables
+
+The monitor tracks changes across all tables automatically.
+
+### Example: Multi-table Application
+
+```sql
+-- Create multiple tables
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE orders (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id),
+  total DECIMAL(10,2),
+  status TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Insert data
+INSERT INTO users (email) VALUES ('alice@example.com');
+INSERT INTO orders (user_id, total, status) VALUES (1, 99.99, 'pending');
+
+-- Update data
+UPDATE orders SET status = 'completed' WHERE id = 1;
+```
+
+All changes appear in the dashboard, clearly labeled with their table name:
+
+- `public.users` - INSERT
+- `public.orders` - INSERT
+- `public.orders` - UPDATE
+
+<Note>
+  The table name includes the schema (e.g., `public.users`) to avoid ambiguity in databases with multiple schemas.
+</Note>
+
+## Using the REST API
+
+In addition to the WebSocket dashboard, you can retrieve changes via the REST API.
+
+### GET /api/changes
+
+Retrieve all accumulated changes:
+
+<CodeGroup>
+```bash cURL
+curl http://localhost:3000/api/changes
+```
+
+```javascript Fetch API
+const response = await fetch('http://localhost:3000/api/changes');
+const changes = await response.json();
+console.log(changes);
+```
+
+```python Python
+import requests
+
+response = requests.get('http://localhost:3000/api/changes')
+changes = response.json()
+print(changes)
+```
+</CodeGroup>
+
+**Response:**
+```json
+[
+  {
+    "operation": "INSERT",
+    "table": "public.todos",
+    "id": 1,
+    "title": "Test task",
+    "done": false,
+    "created_at": "2026-03-03T10:30:00Z"
+  },
+  {
+    "operation": "UPDATE",
+    "table": "public.todos",
+    "id": 1,
+    "title": "Test task",
+    "done": true,
+    "created_at": "2026-03-03T10:30:00Z"
+  }
+]
+```
+
+## Using the WebSocket API
+
+For custom integrations, connect directly to the WebSocket endpoint.
+
+### JavaScript/TypeScript Example
+
+```typescript
+const ws = new WebSocket('ws://localhost:3000/ws');
+
+ws.onopen = () => {
+  console.log('Connected to PostgreSQL monitor');
+};
+
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  
+  if (message.type === 'initial') {
+    console.log('Received initial state:', message.data);
+  } else if (message.type === 'change') {
+    console.log('New changes:', message.data);
+    console.log('Total changes:', message.total);
+  }
+};
+
+ws.onerror = (error) => {
+  console.error('WebSocket error:', error);
+};
+
+ws.onclose = () => {
+  console.log('Disconnected from monitor');
+};
+```
+
+### Python Example
+
+```python
+import asyncio
+import websockets
+import json
+
+async def monitor_changes():
+    uri = "ws://localhost:3000/ws"
+    async with websockets.connect(uri) as websocket:
+        print("Connected to PostgreSQL monitor")
+        
+        async for message in websocket:
+            data = json.loads(message)
+            
+            if data['type'] == 'initial':
+                print(f"Initial state: {len(data['data'])} changes")
+            elif data['type'] == 'change':
+                for change in data['data']:
+                    print(f"{change['operation']} on {change['table']}")
+
+asyncio.run(monitor_changes())
+```
+
+## Common Workflows
+
+### Debugging Database Triggers
+
+Monitor changes caused by database triggers:
+
+```sql
+-- Create a trigger that updates a timestamp
+CREATE OR REPLACE FUNCTION update_modified_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.modified_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_todos_modtime
+    BEFORE UPDATE ON todos
+    FOR EACH ROW
+    EXECUTE FUNCTION update_modified_column();
+
+-- Update a row
+UPDATE todos SET title = 'Updated title' WHERE id = 1;
+```
+
+The monitor will show the UPDATE with the `modified_at` field automatically updated by the trigger.
+
+### Testing Application Logic
+
+Verify that your application is making the expected database changes:
+
+<Steps>
+  <Step title="Start the monitor">
+    Open the dashboard before running your application
+  </Step>
+  
+  <Step title="Run your application">
+    Execute the feature you want to test
+  </Step>
+  
+  <Step title="Verify changes">
+    Check the dashboard to see all database operations in the order they occurred
+  </Step>
+</Steps>
+
+### Auditing Multi-step Transactions
+
+Monitor complex transactions:
+
+```sql
+BEGIN;
+
+INSERT INTO users (email) VALUES ('bob@example.com') RETURNING id;
+-- Assume id = 2
+
+INSERT INTO orders (user_id, total, status) 
+VALUES (2, 149.99, 'pending');
+
+UPDATE users SET last_order_at = NOW() WHERE id = 2;
+
+COMMIT;
+```
+
+All three changes appear in the monitor in sequence, showing the complete transaction flow.
+
+<Note>
+  Changes are broadcast when the transaction **commits**. Rolled-back transactions do not generate change events.
+</Note>
+
+## Advanced Usage
+
+### Connecting from Different Hosts
+
+By default, the server listens on all interfaces. To connect from another machine:
+
+```bash
+wscat -c ws://your-server-ip:3000/ws
+```
+
+### Filtering Changes Programmatically
+
+Fetch changes and filter by criteria:
+
+```javascript
+const response = await fetch('http://localhost:3000/api/changes');
+const changes = await response.json();
+
+// Filter by table
+const userChanges = changes.filter(c => c.table === 'public.users');
+
+// Filter by operation
+const inserts = changes.filter(c => c.operation === 'INSERT');
+
+// Filter by time (requires timestamp in data)
+const recent = changes.filter(c => 
+  new Date(c.created_at) > new Date('2026-03-03T00:00:00Z')
+);
+```
+
+### Handling Reconnection
+
+The frontend automatically reconnects if the WebSocket connection is lost:
+
+```typescript
+ws.onclose = () => {
+  console.log('Connection lost, reconnecting...');
+  setTimeout(connectWebSocket, 1000);
+};
+```
+
+When reconnected, the server sends all accumulated changes via the `initial` message type.
+
+## Server Console Output
+
+The server logs all changes to the console:
+
+```
+📊 Change detected: INSERT on public.todos
+📊 Change detected: UPDATE on public.todos
+📊 Change detected: DELETE on public.todos
+```
+
+Additional logs:
+
+```
+WebSocket client connected. Total: 1
+WebSocket client disconnected. Total: 0
+✅ Realtime subscription ready (connected or reconnected)
+```
+
+## Limitations and Considerations
+
+<Warning>
+  **In-memory storage**: All changes are stored in memory and will be lost when the server restarts. This is intentional for monitoring use cases.
+</Warning>
+
+<AccordionGroup>
+  <Accordion title="Memory Usage">
+    Since changes accumulate in memory, the server's memory usage will grow over time. For long-running sessions monitoring high-traffic databases, consider:
+    
+    - Periodically restarting the server
+    - Implementing a size limit on the `allChanges` array
+    - Adding a "clear" feature to reset the change list
+  </Accordion>
+
+  <Accordion title="Publication Scope">
+    The default `alltables` publication captures changes from all tables. For fine-grained control:
+    
+    ```sql
+    -- Create a publication for specific tables
+    CREATE PUBLICATION specific_tables FOR TABLE users, orders;
+    ```
+    
+    Then update `db.ts`:
+    ```typescript
+    publications: 'specific_tables'
+    ```
+  </Accordion>
+
+  <Accordion title="Replica Identity">
+    For UPDATE and DELETE operations to include all column values, tables may need `REPLICA IDENTITY FULL`:
+    
+    ```sql
+    ALTER TABLE todos REPLICA IDENTITY FULL;
+    ```
+    
+    Without this, only the primary key values may be available for DELETE operations.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Setup" icon="rocket" href="/guides/setup">
+    Review installation steps
+  </Card>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Customize your setup
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/websocket">
+    Explore the API
+  </Card>
+</CardGroup>

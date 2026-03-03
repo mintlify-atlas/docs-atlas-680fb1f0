@@ -1,0 +1,220 @@
+---
+title: Architecture Overview
+description: High-level architecture of the PostgreSQL Realtime Monitor
+---
+
+## System Architecture
+
+PostgreSQL Realtime Monitor is a full-stack application that streams database changes to a web interface in real-time. The architecture follows a three-tier design:
+
+```
+┌─────────────────┐
+│  React Frontend │
+│   (Bun + React) │
+└────────┬────────┘
+         │ WebSocket
+         │
+┌────────▼────────┐
+│  Bun Server     │
+│  (WebSocket +   │
+│   HTTP)         │
+└────────┬────────┘
+         │ postgres.js subscribe
+         │
+┌────────▼────────┐
+│  PostgreSQL     │
+│  (Logical       │
+│   Replication)  │
+└─────────────────┘
+```
+
+## Core Components
+
+### 1. PostgreSQL Database Layer
+
+**Configuration**: `docker-compose.yml:14-18`
+
+The database is configured for logical replication with the following settings:
+
+```yaml
+command: >
+  postgres
+    -c wal_level=logical
+    -c max_wal_senders=10
+    -c max_replication_slots=10
+    -c max_connections=100
+```
+
+<Info>
+  **wal_level=logical** enables logical replication, which allows the database to stream change events instead of just physical disk changes.
+</Info>
+
+**Publication**: All tables are published via the `alltables` publication created in `init.sql`:
+
+```sql
+CREATE PUBLICATION alltables FOR ALL TABLES;
+```
+
+### 2. Bun Server (Backend)
+
+**Location**: `src/index.ts`
+
+The Bun server handles:
+- **HTTP Server**: Serves the React frontend and API endpoints
+- **WebSocket Server**: Manages real-time connections to clients
+- **Database Subscription**: Subscribes to PostgreSQL changes via `postgres.js`
+- **Change Broadcasting**: Forwards database changes to all connected clients
+
+<Note>
+  The server runs on port 3000 by default and includes hot module reloading (HMR) in development mode.
+</Note>
+
+#### Key Features
+
+**State Management**: `src/index.ts:6-9`
+
+```typescript
+// Accumulative array for all changes
+const allChanges: Array<Record<string, any>> = [];
+
+// Connected WebSocket clients
+const clients = new Set<any>();
+```
+
+**Routes**:
+- `/` - Serves the React frontend
+- `/ws` - WebSocket endpoint for real-time updates
+- `/api/changes` - REST API returning all accumulated changes
+
+### 3. React Frontend
+
+**Location**: `src/App.tsx`, `src/components/ChangesTable.tsx`
+
+The frontend provides:
+- Real-time connection status indicator
+- Dynamic table displaying database changes
+- Column-based filtering and sorting
+- Auto-reconnection on disconnect
+
+## Data Flow
+
+### Change Detection Flow
+
+1. **Database Change**: A user performs an INSERT, UPDATE, or DELETE operation
+2. **Logical Replication**: PostgreSQL streams the change via the `alltables` publication
+3. **postgres.js Subscription**: The `sql.subscribe()` method receives the change
+4. **Server Processing**: Change is formatted and added to `allChanges` array
+5. **Broadcasting**: Server sends change to all connected WebSocket clients
+6. **UI Update**: React components update to display the new change
+
+### Message Format
+
+**Initial Load** (`src/index.ts:58-65`):
+
+```typescript
+{
+  type: "initial",
+  data: allChanges  // All accumulated changes
+}
+```
+
+**Real-time Changes** (`src/index.ts:110-114`):
+
+```typescript
+{
+  type: "change",
+  data: newChanges,  // Array of new changes
+  total: allChanges.length
+}
+```
+
+**Change Object Structure** (`src/index.ts:100-104`):
+
+```typescript
+{
+  operation: "INSERT" | "UPDATE" | "DELETE",
+  table: "schema.table_name",
+  ...columnData  // All column values from the row
+}
+```
+
+## Technology Stack
+
+<CardGroup cols={2}>
+  <Card title="Runtime" icon="bolt">
+    **Bun** - Fast all-in-one JavaScript runtime with built-in bundler, test runner, and package manager
+  </Card>
+  <Card title="Frontend" icon="react">
+    **React 19** - Component-based UI library with hooks for state management
+  </Card>
+  <Card title="Database" icon="database">
+    **PostgreSQL 16** - Relational database with logical replication support
+  </Card>
+  <Card title="Database Client" icon="code">
+    **postgres.js** - Full-featured PostgreSQL client with native subscription API
+  </Card>
+</CardGroup>
+
+## Key Design Decisions
+
+### Why Logical Replication?
+
+Logical replication provides:
+- Row-level change tracking with actual data values
+- Selective table monitoring via publications
+- Lower overhead than trigger-based solutions
+- Native PostgreSQL feature (no extensions required)
+
+### Why WebSockets?
+
+WebSockets enable:
+- Bi-directional, persistent connections
+- Low-latency real-time updates
+- Efficient broadcasting to multiple clients
+- Built-in support in Bun runtime
+
+### Why Bun?
+
+<Tip>
+  Bun combines the server runtime, bundler, and development server into a single tool, eliminating the need for separate tools like webpack, vite, or nodemon.
+</Tip>
+
+Bun provides:
+- Native WebSocket support
+- Built-in HMR for React development
+- Fast startup and execution times
+- TypeScript support out of the box
+- Single binary deployment
+
+## Scalability Considerations
+
+### Current Limitations
+
+1. **In-Memory Storage**: All changes are stored in the `allChanges` array, which grows unbounded
+2. **Single Server**: No horizontal scaling support
+3. **No Persistence**: Changes are lost on server restart
+
+### Potential Improvements
+
+- Implement pagination or time-windowed storage
+- Add Redis for distributed state management
+- Use message queues (RabbitMQ, Kafka) for change distribution
+- Add authentication and per-client filtering
+- Implement change retention policies
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="WebSocket Protocol" href="./websocket" icon="satellite-dish">
+    Learn about the WebSocket implementation and message protocol
+  </Card>
+  <Card title="Database Subscription" href="./database-subscription" icon="database">
+    Understand how logical replication and postgres.js work together
+  </Card>
+  <Card title="React Components" href="./components" icon="react">
+    Explore the frontend component architecture
+  </Card>
+  <Card title="Getting Started" href="/guides/setup" icon="rocket">
+    Set up your development environment
+  </Card>
+</CardGroup>

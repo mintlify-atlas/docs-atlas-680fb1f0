@@ -1,0 +1,379 @@
+---
+title: "WebSocket API"
+description: "Real-time WebSocket API for monitoring PostgreSQL database changes"
+---
+
+## Overview
+
+The WebSocket API provides real-time streaming of PostgreSQL database changes to connected clients. When you connect to the WebSocket endpoint, you'll receive an initial snapshot of all changes and then continuous updates as new changes occur.
+
+## Connection
+
+### Endpoint
+
+```
+ws://localhost:3000/ws
+```
+
+### Establishing Connection
+
+```javascript
+const ws = new WebSocket("ws://localhost:3000/ws");
+
+ws.onopen = () => {
+  console.log("Connected to PostgreSQL Realtime Monitor");
+};
+
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  console.log("Received:", message);
+};
+
+ws.onerror = (error) => {
+  console.error("WebSocket error:", error);
+};
+
+ws.onclose = (event) => {
+  console.log("Disconnected:", event.code, event.reason);
+};
+```
+
+## Message Types
+
+The server sends JSON messages with the following structure:
+
+### WebSocketMessage Interface
+
+```typescript
+interface WebSocketMessage {
+  type: "initial" | "change";
+  data: Change[];
+  total?: number;
+}
+```
+
+<ParamField path="type" type="'initial' | 'change'" required>
+  The type of message being sent:
+  - `initial`: Sent immediately after connection with all existing changes
+  - `change`: Sent when new database changes occur
+</ParamField>
+
+<ParamField path="data" type="Change[]" required>
+  Array of database change objects. Each change includes the operation type, table name, and all row data.
+</ParamField>
+
+<ParamField path="total" type="number">
+  Total number of changes tracked by the server. Only included in `change` messages.
+</ParamField>
+
+### Change Object
+
+```typescript
+interface Change {
+  operation: string;
+  table: string;
+  [key: string]: any;
+}
+```
+
+<ParamField path="operation" type="string" required>
+  The database operation that occurred. Possible values:
+  - `INSERT`: New row was created
+  - `UPDATE`: Existing row was modified
+  - `DELETE`: Row was removed
+</ParamField>
+
+<ParamField path="table" type="string" required>
+  The fully qualified table name in the format `schema.table` (e.g., `public.users`).
+</ParamField>
+
+<ParamField path="[key: string]" type="any">
+  All columns from the affected row are included as additional properties. Column names become property keys with their corresponding values.
+</ParamField>
+
+## Message Examples
+
+### Initial Message
+
+Sent immediately when a client connects, containing all previously captured changes:
+
+```json
+{
+  "type": "initial",
+  "data": [
+    {
+      "operation": "INSERT",
+      "table": "public.users",
+      "id": 1,
+      "name": "John Doe",
+      "email": "john@example.com",
+      "created_at": "2026-03-03T10:30:00Z"
+    },
+    {
+      "operation": "UPDATE",
+      "table": "public.products",
+      "id": 42,
+      "name": "Widget",
+      "price": 29.99,
+      "updated_at": "2026-03-03T11:15:00Z"
+    }
+  ]
+}
+```
+
+### Change Message
+
+Sent in real-time when database operations occur:
+
+```json
+{
+  "type": "change",
+  "data": [
+    {
+      "operation": "INSERT",
+      "table": "public.orders",
+      "id": 123,
+      "user_id": 1,
+      "amount": 99.99,
+      "status": "pending",
+      "created_at": "2026-03-03T12:00:00Z"
+    }
+  ],
+  "total": 3
+}
+```
+
+### Batch Changes
+
+Multiple changes from a single operation are sent together:
+
+```json
+{
+  "type": "change",
+  "data": [
+    {
+      "operation": "DELETE",
+      "table": "public.old_records",
+      "id": 1,
+      "deleted_at": "2026-03-03T12:30:00Z"
+    },
+    {
+      "operation": "DELETE",
+      "table": "public.old_records",
+      "id": 2,
+      "deleted_at": "2026-03-03T12:30:00Z"
+    }
+  ],
+  "total": 5
+}
+```
+
+## Connection Lifecycle
+
+### On Connect
+
+<Steps>
+  <Step title="Client initiates connection">
+    Client establishes WebSocket connection to `/ws` endpoint
+  </Step>
+  
+  <Step title="Server accepts connection">
+    Server upgrades the HTTP connection to WebSocket protocol
+  </Step>
+  
+  <Step title="Server sends initial state">
+    If changes exist, server immediately sends an `initial` message with all accumulated changes
+  </Step>
+  
+  <Step title="Client receives real-time updates">
+    Client now receives `change` messages as database operations occur
+  </Step>
+</Steps>
+
+### On Disconnect
+
+- Server removes client from broadcast list
+- Connection can be re-established at any time
+- Upon reconnection, client receives fresh `initial` message with all changes
+
+### Automatic Reconnection
+
+Implement reconnection logic for robust connections:
+
+```javascript
+let ws = null;
+let reconnectTimeout = null;
+
+function connect() {
+  ws = new WebSocket("ws://localhost:3000/ws");
+  
+  ws.onopen = () => {
+    console.log("Connected");
+  };
+  
+  ws.onclose = (event) => {
+    console.log("Disconnected");
+    
+    // Reconnect after 3 seconds if not intentional close
+    if (event.code !== 1000) {
+      reconnectTimeout = setTimeout(connect, 3000);
+    }
+  };
+  
+  ws.onerror = (error) => {
+    console.error("Error:", error);
+  };
+}
+
+connect();
+```
+
+## Broadcasting Behavior
+
+<Note>
+  All connected clients receive the same messages simultaneously. Changes are broadcast to every active WebSocket connection.
+</Note>
+
+### Server Implementation
+
+The server maintains a set of connected clients and broadcasts messages:
+
+```typescript
+const clients = new Set<any>();
+
+function broadcast(data: any) {
+  const message = JSON.stringify(data);
+  clients.forEach((client: any) => {
+    if (client.readyState === 1) { // WebSocket.OPEN
+      client.send(message);
+    }
+  });
+}
+```
+
+## Client Message Handling
+
+Clients can send messages to the server, though the current implementation primarily logs them:
+
+```javascript
+// Send a message to the server
+ws.send("ping");
+
+// Server logs received messages
+// Message received: ping
+```
+
+<Info>
+  The WebSocket protocol supports bidirectional communication, but the primary data flow is server-to-client for database change notifications.
+</Info>
+
+## Error Handling
+
+### Connection Errors
+
+```javascript
+ws.onerror = (error) => {
+  console.error("WebSocket error:", error);
+  // Handle connection issues
+  // Typically followed by onclose event
+};
+```
+
+### Message Parsing Errors
+
+```javascript
+ws.onmessage = (event) => {
+  try {
+    const message = JSON.parse(event.data);
+    // Process message
+  } catch (error) {
+    console.error("Error parsing message:", error);
+  }
+};
+```
+
+### Close Codes
+
+<ResponseField name="1000" type="Normal Closure">
+  Normal closure, typically when client intentionally disconnects or component unmounts.
+</ResponseField>
+
+<ResponseField name="1001" type="Going Away">
+  Browser tab closed or navigating away from page.
+</ResponseField>
+
+<ResponseField name="1006" type="Abnormal Closure">
+  Connection lost unexpectedly (network issues, server crash).
+</ResponseField>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Implement Reconnection" icon="rotate">
+    Always include automatic reconnection logic with exponential backoff to handle network interruptions gracefully.
+  </Card>
+  
+  <Card title="Parse Messages Safely" icon="shield-check">
+    Wrap JSON.parse() in try-catch blocks to handle malformed messages without crashing your application.
+  </Card>
+  
+  <Card title="Track Connection State" icon="signal">
+    Monitor `readyState` and connection events to update your UI and inform users of connection status.
+  </Card>
+  
+  <Card title="Clean Up on Unmount" icon="trash">
+    Always close WebSocket connections when components unmount to prevent memory leaks and ghost connections.
+  </Card>
+</CardGroup>
+
+## TypeScript Usage
+
+Full type-safe WebSocket implementation:
+
+```typescript
+import { useState, useEffect, useRef } from "react";
+
+interface Change {
+  operation: string;
+  table: string;
+  [key: string]: any;
+}
+
+interface WebSocketMessage {
+  type: "initial" | "change";
+  data: Change[];
+  total?: number;
+}
+
+function useRealtimeChanges() {
+  const [changes, setChanges] = useState<Change[]>([]);
+  const [connected, setConnected] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    const ws = new WebSocket("ws://localhost:3000/ws");
+    wsRef.current = ws;
+
+    ws.onopen = () => setConnected(true);
+
+    ws.onmessage = (event) => {
+      const message: WebSocketMessage = JSON.parse(event.data);
+
+      if (message.type === "initial") {
+        setChanges(message.data);
+      } else if (message.type === "change") {
+        setChanges((prev) => [...prev, ...message.data]);
+      }
+    };
+
+    ws.onerror = () => setConnected(false);
+    ws.onclose = () => setConnected(false);
+
+    return () => {
+      ws.close(1000, "Component unmounting");
+    };
+  }, []);
+
+  return { changes, connected };
+}
+```

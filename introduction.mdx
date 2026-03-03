@@ -1,0 +1,161 @@
+---
+title: Introduction
+description: Monitor PostgreSQL database changes in real-time with WebSockets, Bun, and React
+---
+
+# PostgreSQL Realtime Monitor
+
+PostgreSQL Realtime Monitor is a powerful tool for monitoring database changes as they happen. Built with modern technologies, it provides instant visibility into INSERT, UPDATE, and DELETE operations across all your PostgreSQL tables.
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick Start"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Get up and running in under 5 minutes with Docker and Bun
+  </Card>
+  <Card
+    title="Architecture"
+    icon="diagram-project"
+    href="/architecture/overview"
+  >
+    Learn how the real-time monitoring system works under the hood
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/api/websocket"
+  >
+    Explore the WebSocket API and REST endpoints
+  </Card>
+  <Card
+    title="Configuration"
+    icon="gear"
+    href="/guides/configuration"
+  >
+    Customize database connections and server settings
+  </Card>
+</CardGroup>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Real-time Updates" icon="bolt">
+    Monitor all database operations (INSERT, UPDATE, DELETE) as they occur using PostgreSQL logical replication
+  </Card>
+  <Card title="WebSocket Streaming" icon="stream">
+    Low-latency WebSocket connections powered by Bun for instant change notifications
+  </Card>
+  <Card title="Sortable & Filterable" icon="filter">
+    Interactive React table with column sorting, filtering, and dynamic column detection
+  </Card>
+  <Card title="Modern UI" icon="palette">
+    Beautiful dark theme interface with color-coded operations and connection status indicators
+  </Card>
+  <Card title="Hot Module Reloading" icon="fire">
+    Fast development workflow with Bun's built-in HMR for React components
+  </Card>
+  <Card title="Auto-reconnect" icon="rotate">
+    Automatic WebSocket reconnection with graceful error handling and state recovery
+  </Card>
+</CardGroup>
+
+## How It Works
+
+The system uses PostgreSQL's logical replication feature to subscribe to database changes:
+
+1. **PostgreSQL** is configured with `wal_level=logical` to enable change data capture
+2. **Bun Server** subscribes to all table changes using the `postgres` library
+3. **WebSocket** broadcasts changes in real-time to connected clients
+4. **React Frontend** displays changes in an interactive, filterable table
+
+<Note>
+  All changes are stored in memory on the server. When the server restarts, the change history is cleared.
+</Note>
+
+## Technology Stack
+
+<CodeGroup>
+
+```json package.json
+{
+  "dependencies": {
+    "postgres": "^3.4.7",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.2",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0"
+  }
+}
+```
+
+```yaml docker-compose.yml
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: appdb
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: secret
+    command: |
+      postgres
+        -c wal_level=logical
+        -c max_wal_senders=10
+        -c max_replication_slots=10
+```
+
+</CodeGroup>
+
+## Use Cases
+
+<AccordionGroup>
+  <Accordion title="Development & Debugging">
+    Watch database changes in real-time during development to understand how your application interacts with the database. Perfect for debugging complex workflows and data mutations.
+  </Accordion>
+  <Accordion title="Audit & Compliance">
+    Track all data modifications for compliance and audit purposes. Every INSERT, UPDATE, and DELETE operation is captured with full row data.
+  </Accordion>
+  <Accordion title="Analytics & Monitoring">
+    Build real-time dashboards and analytics by streaming database changes to your monitoring systems. The WebSocket API makes integration simple.
+  </Accordion>
+  <Accordion title="Cache Invalidation">
+    Automatically invalidate caches when database records change. Subscribe to specific tables and trigger cache updates instantly.
+  </Accordion>
+</AccordionGroup>
+
+## Requirements
+
+<CardGroup cols={2}>
+  <Card title="Bun Runtime" icon="b">
+    Install [Bun](https://bun.sh) v1.0 or higher for the server runtime
+  </Card>
+  <Card title="Docker" icon="docker">
+    Docker and Docker Compose for running PostgreSQL with logical replication enabled
+  </Card>
+</CardGroup>
+
+<Warning>
+  PostgreSQL must be configured with `wal_level=logical` to enable change data capture. The provided Docker Compose file includes this configuration automatically.
+</Warning>
+
+## What's Next?
+
+<Steps>
+  <Step title="Get Started">
+    Follow the [Quickstart Guide](/quickstart) to set up your first real-time monitor in minutes
+  </Step>
+  <Step title="Explore the Code">
+    Dive into the [Architecture](/architecture/overview) to understand how the system works
+  </Step>
+  <Step title="Customize">
+    Learn how to [configure](/guides/configuration) the database connection and server settings
+  </Step>
+  <Step title="Integrate">
+    Check out the [API Reference](/api/websocket) to integrate with your applications
+  </Step>
+</Steps>

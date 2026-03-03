@@ -1,0 +1,640 @@
+---
+title: React Components
+description: Frontend component architecture and state management
+---
+
+## Component Hierarchy
+
+The React frontend follows a simple component structure:
+
+```
+App (src/App.tsx)
+  ├── Connection Status Indicator
+  ├── Total Changes Counter
+  └── ChangesTable (src/components/ChangesTable.tsx)
+        ├── Filter Bar
+        ├── Table Header (sortable)
+        ├── Filter Row
+        └── Table Body (row data)
+```
+
+## Entry Point
+
+**File**: `src/frontend.tsx`
+
+The application entry point sets up React with hot module reloading support:
+
+```typescript
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { App } from "./App";
+
+const elem = document.getElementById("root")!;
+const app = (
+  <StrictMode>
+    <App />
+  </StrictMode>
+);
+
+if (import.meta.hot) {
+  // With hot module reloading, `import.meta.hot.data` is persisted.
+  const root = (import.meta.hot.data.root ??= createRoot(elem));
+  root.render(app);
+} else {
+  // The hot module reloading API is not available in production.
+  createRoot(elem).render(app);
+}
+```
+
+<Info>
+  Bun's built-in HMR (Hot Module Reloading) preserves the React root across reloads, preventing full page refreshes during development.
+</Info>
+
+## App Component
+
+**File**: `src/App.tsx`
+
+The root component manages WebSocket connection and change data.
+
+### State Management
+
+```typescript
+const [changes, setChanges] = useState<Change[]>([]);
+const [connected, setConnected] = useState(false);
+const [totalChanges, setTotalChanges] = useState(0);
+const wsRef = useRef<WebSocket | null>(null);
+```
+
+**Source**: `src/App.tsx:18-21`
+
+<AccordionGroup>
+  <Accordion title="changes: Change[]">
+    **Type Definition** (`src/App.tsx:5-9`):
+    
+    ```typescript
+    interface Change {
+      operation: string;
+      table: string;
+      [key: string]: any;
+    }
+    ```
+    
+    Stores all database changes received from the WebSocket server. Each change includes:
+    - `operation`: SQL command (INSERT, UPDATE, DELETE)
+    - `table`: Fully qualified table name
+    - Additional properties for all row columns
+  </Accordion>
+  
+  <Accordion title="connected: boolean">
+    Tracks the WebSocket connection state. Used to:
+    - Display connection status indicator
+    - Update UI styling (green dot when connected, red when disconnected)
+    - Trigger visual feedback
+  </Accordion>
+  
+  <Accordion title="totalChanges: number">
+    Maintains a count of total changes accumulated on the server. This may differ from `changes.length` during initial load or after filtering.
+  </Accordion>
+  
+  <Accordion title="wsRef: WebSocket | null">
+    React ref to store the WebSocket instance across renders. Using a ref instead of state prevents unnecessary re-renders when the WebSocket object changes.
+  </Accordion>
+</AccordionGroup>
+
+### WebSocket Integration
+
+The WebSocket connection is established in a `useEffect` hook (`src/App.tsx:23-123`):
+
+```typescript
+useEffect(() => {
+  let ws: WebSocket | null = null;
+  let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  let isMounted = true;
+
+  const connect = () => {
+    // Avoid creating multiple connections
+    if (wsRef.current?.readyState === WebSocket.OPEN || 
+        wsRef.current?.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+
+    // Clean up previous connection if it exists
+    if (wsRef.current) {
+      try {
+        wsRef.current.close();
+      } catch (e) {
+        // Ignore errors when closing
+      }
+    }
+
+    // Connect to WebSocket
+    ws = new WebSocket("ws://localhost:3000/ws");
+    wsRef.current = ws;
+    
+    // ... event handlers
+  };
+
+  connect();
+
+  return () => {
+    isMounted = false;
+    // Cleanup logic
+  };
+}, []); // Only run once on mount
+```
+
+<Tip>
+  The empty dependency array `[]` ensures the WebSocket connection is established only once when the component mounts, preventing reconnection loops.
+</Tip>
+
+#### Message Handling (`src/App.tsx:55-75`)
+
+```typescript
+ws.onmessage = (event) => {
+  if (!isMounted) return;
+  
+  try {
+    const message: WebSocketMessage = JSON.parse(event.data);
+
+    if (message.type === "initial") {
+      // Initial load of all changes
+      setChanges(message.data);
+      setTotalChanges(message.data.length);
+    } else if (message.type === "change") {
+      // New changes - add to state
+      setChanges((prev) => [...prev, ...message.data]);
+      if (message.total) {
+        setTotalChanges(message.total);
+      }
+    }
+  } catch (error) {
+    console.error("Error parsing WebSocket message:", error);
+  }
+};
+```
+
+<Note>
+  The `isMounted` flag prevents state updates after the component unmounts, avoiding React warnings about memory leaks.
+</Note>
+
+### Render Structure (`src/App.tsx:125-163`)
+
+```typescript
+return (
+  <div className="app">
+    <h1>📊 PostgreSQL Realtime Monitor</h1>
+    <div style={{...}}>
+      {/* Connection Status Indicator */}
+      <div style={{...}}>
+        <div style={{
+          width: "10px",
+          height: "10px",
+          borderRadius: "50%",
+          backgroundColor: connected ? "#10b981" : "#ef4444",
+          boxShadow: connected ? "0 0 10px #10b981" : "none",
+        }} />
+        <span>{connected ? "Connected" : "Disconnected"}</span>
+      </div>
+      
+      {/* Total Changes Counter */}
+      <span style={{...}}>Total changes: <strong>{totalChanges}</strong></span>
+    </div>
+    
+    {/* Changes Table */}
+    <ChangesTable changes={changes} />
+  </div>
+);
+```
+
+## ChangesTable Component
+
+**File**: `src/components/ChangesTable.tsx`
+
+A feature-rich table component with sorting, filtering, and dynamic column generation.
+
+### Props Interface (`src/components/ChangesTable.tsx:9-11`)
+
+```typescript
+interface ChangesTableProps {
+  changes: Change[];
+}
+```
+
+### State Management
+
+```typescript
+const [sortColumn, setSortColumn] = useState<string | null>(null);
+const [sortDirection, setSortDirection] = useState<SortDirection>(null);
+const [filters, setFilters] = useState<Record<string, string>>({});
+```
+
+**Source**: `src/components/ChangesTable.tsx:16-18`
+
+- **sortColumn**: Currently sorted column name
+- **sortDirection**: Sort order (`"asc"`, `"desc"`, or `null`)
+- **filters**: Map of column names to filter strings
+
+### Dynamic Column Detection (`src/components/ChangesTable.tsx:21-27`)
+
+Columns are automatically detected from the data:
+
+```typescript
+const columns = useMemo(() => {
+  const columnSet = new Set<string>();
+  changes.forEach((change) => {
+    Object.keys(change).forEach((key) => columnSet.add(key));
+  });
+  return Array.from(columnSet);
+}, [changes]);
+```
+
+<Info>
+  This approach supports heterogeneous data where different tables may have different columns. The table dynamically adjusts to show all columns from all changes.
+</Info>
+
+### Filtering Logic (`src/components/ChangesTable.tsx:30-46`)
+
+```typescript
+const filteredChanges = useMemo(() => {
+  const filterEntries = Object.entries(filters).filter(
+    ([_, value]) => value.trim() !== ""
+  );
+
+  if (filterEntries.length === 0) {
+    return changes;
+  }
+
+  return changes.filter((change) => {
+    return filterEntries.every(([column, filterValue]) => {
+      const value = change[column];
+      if (value == null) {
+        return filterValue.toLowerCase() === "null" || filterValue.toLowerCase() === "";
+      }
+      return String(value).toLowerCase().includes(filterValue.toLowerCase());
+    });
+  });
+}, [changes, filters]);
+```
+
+**Features**:
+- Case-insensitive substring matching
+- Multiple filters applied with AND logic
+- Null value handling (match "null" string)
+- Memoized for performance
+
+### Sorting Logic (`src/components/ChangesTable.tsx:49-84`)
+
+```typescript
+const sortedChanges = useMemo(() => {
+  if (!sortColumn || !sortDirection) {
+    return filteredChanges;
+  }
+
+  return [...filteredChanges].sort((a, b) => {
+    const aValue = a[sortColumn];
+    const bValue = b[sortColumn];
+
+    // Handle null/undefined values
+    if (aValue == null && bValue == null) return 0;
+    if (aValue == null) return 1;
+    if (bValue == null) return -1;
+
+    // Compare values
+    let comparison = 0;
+    if (typeof aValue === "number" && typeof bValue === "number") {
+      comparison = aValue - bValue;
+    } else if (aValue instanceof Date && bValue instanceof Date) {
+      comparison = aValue.getTime() - bValue.getTime();
+    } else {
+      // Try to parse as date (ISO format)
+      const aDate = typeof aValue === "string" ? new Date(aValue) : null;
+      const bDate = typeof bValue === "string" ? new Date(bValue) : null;
+
+      if (aDate && bDate && !isNaN(aDate.getTime()) && !isNaN(bDate.getTime())) {
+        comparison = aDate.getTime() - bDate.getTime();
+      } else {
+        // String comparison
+        comparison = String(aValue).localeCompare(String(bValue));
+      }
+    }
+
+    return sortDirection === "asc" ? comparison : -comparison;
+  });
+}, [filteredChanges, sortColumn, sortDirection]);
+```
+
+<Tip>
+  The sorting logic automatically detects data types:
+  - **Numbers**: Numeric comparison
+  - **Dates**: Timestamp comparison
+  - **Date strings**: ISO 8601 parsing
+  - **Everything else**: Lexicographic comparison
+</Tip>
+
+### Sort Interaction (`src/components/ChangesTable.tsx:103-117`)
+
+```typescript
+const handleSort = (column: string) => {
+  if (sortColumn === column) {
+    // If already sorted by this column, change direction
+    if (sortDirection === "asc") {
+      setSortDirection("desc");
+    } else if (sortDirection === "desc") {
+      setSortColumn(null);
+      setSortDirection(null);
+    }
+  } else {
+    // New column, sort ascending
+    setSortColumn(column);
+    setSortDirection("asc");
+  }
+};
+```
+
+**Sort Cycle**:
+1. First click: Sort ascending
+2. Second click: Sort descending
+3. Third click: Clear sort
+
+### Operation Color Coding (`src/components/ChangesTable.tsx:120-131`)
+
+```typescript
+const getOperationColor = (operation: string) => {
+  switch (operation.toUpperCase()) {
+    case "INSERT":
+      return "#10b981"; // green
+    case "UPDATE":
+      return "#3b82f6"; // blue
+    case "DELETE":
+      return "#ef4444"; // red
+    default:
+      return "#6b7280"; // gray
+  }
+};
+```
+
+<CardGroup cols={3}>
+  <Card title="INSERT" icon="plus" color="#10b981">
+    Green badge for new records
+  </Card>
+  <Card title="UPDATE" icon="pen" color="#3b82f6">
+    Blue badge for modifications
+  </Card>
+  <Card title="DELETE" icon="trash" color="#ef4444">
+    Red badge for deletions
+  </Card>
+</CardGroup>
+
+### Empty State (`src/components/ChangesTable.tsx:133-154`)
+
+Displayed when no changes are available:
+
+```typescript
+if (changes.length === 0) {
+  return (
+    <div style={{...}}>
+      <p style={{ fontSize: "1.2rem" }}>
+        Waiting for database changes...
+      </p>
+      <p style={{ fontSize: "0.9rem", marginTop: "0.5rem" }}>
+        Changes will appear here in real-time
+      </p>
+    </div>
+  );
+}
+```
+
+### Table Structure
+
+#### Filter Bar (`src/components/ChangesTable.tsx:168-206`)
+
+Displayed when filters are active:
+
+```typescript
+{activeFiltersCount > 0 && (
+  <div style={{...}}>
+    <span>Active filters: {activeFiltersCount}</span>
+    <button onClick={clearFilters}>Clear filters</button>
+  </div>
+)}
+```
+
+#### Header Row (`src/components/ChangesTable.tsx:215-278`)
+
+Sortable column headers with visual indicators:
+
+```typescript
+<th
+  onClick={() => handleSort(column)}
+  style={{ cursor: "pointer", userSelect: "none" }}
+>
+  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+    <span>{column}</span>
+    {isSorted && (
+      <span>{isAsc ? "↑" : "↓"}</span>
+    )}
+    {!isSorted && (
+      <span style={{ opacity: 0.5 }}>↕</span>
+    )}
+  </div>
+</th>
+```
+
+#### Filter Row (`src/components/ChangesTable.tsx:280-318`)
+
+Input fields for each column:
+
+```typescript
+<tr>
+  {columns.map((column) => (
+    <td key={column}>
+      <input
+        type="text"
+        placeholder={`Filter ${column}...`}
+        value={filters[column] || ""}
+        onChange={(e) => handleFilterChange(column, e.target.value)}
+      />
+    </td>
+  ))}
+</tr>
+```
+
+#### Data Rows (`src/components/ChangesTable.tsx:320-378`)
+
+Renders each change with alternating row colors and hover effects:
+
+```typescript
+{sortedChanges.map((change, index) => (
+  <tr
+    key={index}
+    style={{
+      backgroundColor: index % 2 === 0 ? "#1a1a1a" : "#151515",
+    }}
+    onMouseEnter={(e) => {
+      e.currentTarget.style.backgroundColor = "#2a2a2a";
+    }}
+  >
+    {columns.map((column) => {
+      const value = change[column];
+      const isOperation = column === "operation";
+      
+      return (
+        <td key={column}>
+          {isOperation ? (
+            <span style={{
+              backgroundColor: getOperationColor(value || ""),
+              color: "#ffffff",
+              textTransform: "uppercase",
+            }}>
+              {value}
+            </span>
+          ) : value != null ? (
+            <span>{String(value)}</span>
+          ) : (
+            <span style={{ color: "#64748b", fontStyle: "italic" }}>null</span>
+          )}
+        </td>
+      );
+    })}
+  </tr>
+))}
+```
+
+## Performance Optimizations
+
+### Memoization
+
+Expensive computations are memoized with `useMemo`:
+
+- **Column detection**: Only recalculates when `changes` array changes
+- **Filtering**: Only recalculates when `changes` or `filters` change
+- **Sorting**: Only recalculates when `filteredChanges`, `sortColumn`, or `sortDirection` change
+
+### Avoiding Unnecessary Re-renders
+
+```typescript
+const wsRef = useRef<WebSocket | null>(null);
+```
+
+Using `useRef` for the WebSocket instance prevents re-renders when the WebSocket object changes.
+
+### Functional State Updates (`src/App.tsx:67`)
+
+```typescript
+setChanges((prev) => [...prev, ...message.data]);
+```
+
+Prevents stale closure issues by accessing the latest state value.
+
+## Styling Approach
+
+The application uses inline styles for simplicity and performance:
+
+- No CSS-in-JS library overhead
+- Co-located with component logic
+- Dynamic styling based on state (hover effects, conditional colors)
+- Theme colors:
+  - Background: `#1a1a1a`, `#151515`, `#0f0f0f`
+  - Primary: `#fbf0df`
+  - Accent: `#f3d5a3`
+  - Success: `#10b981`
+  - Error: `#ef4444`
+  - Info: `#3b82f6`
+
+## Component Communication
+
+```
+App
+  │
+  ├─ Manages WebSocket connection
+  ├─ Receives and stores changes
+  └─ Passes changes to ChangesTable
+       │
+       └─ Filters and sorts changes
+          └─ Renders table UI
+```
+
+<Note>
+  The component tree is shallow by design. For larger applications, consider using Context API or state management libraries like Zustand or Redux.
+</Note>
+
+## Type Safety
+
+TypeScript interfaces ensure type safety throughout the component tree:
+
+```typescript
+// App.tsx
+interface Change {
+  operation: string;
+  table: string;
+  [key: string]: any;
+}
+
+interface WebSocketMessage {
+  type: "initial" | "change";
+  data: Change[];
+  total?: number;
+}
+
+// ChangesTable.tsx
+interface ChangesTableProps {
+  changes: Change[];
+}
+
+type SortDirection = "asc" | "desc" | null;
+```
+
+## Testing Considerations
+
+While no tests are currently implemented, the component structure supports testing:
+
+### Unit Tests
+
+- **Sorting logic**: Test `handleSort` with various data types
+- **Filtering logic**: Test filter matching with edge cases
+- **Color coding**: Test `getOperationColor` with all operations
+
+### Integration Tests
+
+- **WebSocket connection**: Mock WebSocket to test message handling
+- **Component rendering**: Test that changes are displayed correctly
+- **User interactions**: Test sorting, filtering, and clearing filters
+
+### Example Test Structure
+
+```typescript
+import { render, screen, fireEvent } from '@testing-library/react';
+import { ChangesTable } from './ChangesTable';
+
+describe('ChangesTable', () => {
+  it('displays empty state when no changes', () => {
+    render(<ChangesTable changes={[]} />);
+    expect(screen.getByText(/waiting for database changes/i)).toBeInTheDocument();
+  });
+  
+  it('filters changes by column value', () => {
+    const changes = [
+      { operation: 'INSERT', table: 'users', id: 1, name: 'Alice' },
+      { operation: 'UPDATE', table: 'users', id: 2, name: 'Bob' },
+    ];
+    
+    render(<ChangesTable changes={changes} />);
+    const filterInput = screen.getByPlaceholderText(/filter name/i);
+    fireEvent.change(filterInput, { target: { value: 'Alice' } });
+    
+    expect(screen.getByText('Alice')).toBeInTheDocument();
+    expect(screen.queryByText('Bob')).not.toBeInTheDocument();
+  });
+});
+```
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Architecture Overview" href="./overview" icon="diagram-project">
+    Understand the complete system architecture
+  </Card>
+  <Card title="WebSocket Protocol" href="./websocket" icon="satellite-dish">
+    Learn how data flows from server to client
+  </Card>
+</CardGroup>

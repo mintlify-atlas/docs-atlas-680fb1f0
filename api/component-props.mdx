@@ -1,0 +1,545 @@
+---
+title: "Component Props"
+description: "React component API reference with TypeScript type definitions"
+---
+
+## Overview
+
+This page documents the React components and their props used in the PostgreSQL Realtime Monitor application. All components are written in TypeScript with full type safety.
+
+## ChangesTable
+
+The main component for displaying database changes in a sortable, filterable table.
+
+### Import
+
+```typescript
+import { ChangesTable } from "./components/ChangesTable";
+```
+
+### Props
+
+<ParamField path="changes" type="Change[]" required>
+  Array of database change objects to display in the table.
+</ParamField>
+
+### Type Definitions
+
+```typescript
+interface Change {
+  operation: string;
+  table: string;
+  [key: string]: any;
+}
+
+interface ChangesTableProps {
+  changes: Change[];
+}
+```
+
+### Usage Example
+
+```typescript
+import { ChangesTable } from "./components/ChangesTable";
+
+function App() {
+  const changes = [
+    {
+      operation: "INSERT",
+      table: "public.users",
+      id: 1,
+      name: "John Doe",
+      email: "john@example.com",
+    },
+    {
+      operation: "UPDATE",
+      table: "public.products",
+      id: 42,
+      name: "Widget",
+      price: 29.99,
+    },
+  ];
+
+  return <ChangesTable changes={changes} />;
+}
+```
+
+### Features
+
+<CardGroup cols={2}>
+  <Card title="Dynamic Columns" icon="table-columns">
+    Automatically generates columns based on all unique keys across all change objects.
+  </Card>
+  
+  <Card title="Sorting" icon="arrow-down-a-z">
+    Click column headers to sort ascending, descending, or clear sort. Supports numbers, dates, and strings.
+  </Card>
+  
+  <Card title="Filtering" icon="filter">
+    Filter rows by entering text in the filter inputs below each column header.
+  </Card>
+  
+  <Card title="Empty State" icon="inbox">
+    Displays a friendly message when no changes are available.
+  </Card>
+</CardGroup>
+
+### Internal State
+
+The component manages several pieces of internal state:
+
+```typescript
+type SortDirection = "asc" | "desc" | null;
+
+const [sortColumn, setSortColumn] = useState<string | null>(null);
+const [sortDirection, setSortDirection] = useState<SortDirection>(null);
+const [filters, setFilters] = useState<Record<string, string>>({});
+```
+
+<Expandable title="State Management Details">
+  <ResponseField name="sortColumn" type="string | null">
+    The currently sorted column name, or `null` if no sorting is active.
+  </ResponseField>
+
+  <ResponseField name="sortDirection" type="'asc' | 'desc' | null">
+    The sort direction: `"asc"` for ascending, `"desc"` for descending, `null` for no sort.
+  </ResponseField>
+
+  <ResponseField name="filters" type="Record<string, string>">
+    Object mapping column names to filter strings entered by the user.
+  </ResponseField>
+</Expandable>
+
+### Column Generation
+
+Columns are dynamically generated from all unique keys in the changes array:
+
+```typescript
+const columns = useMemo(() => {
+  const columnSet = new Set<string>();
+  changes.forEach((change) => {
+    Object.keys(change).forEach((key) => columnSet.add(key));
+  });
+  return Array.from(columnSet);
+}, [changes]);
+```
+
+<Info>
+  If different changes have different columns (e.g., different tables), the table will include all columns and display `null` for missing values.
+</Info>
+
+### Filtering Logic
+
+Filters are applied before sorting:
+
+```typescript
+const filteredChanges = useMemo(() => {
+  const filterEntries = Object.entries(filters).filter(
+    ([_, value]) => value.trim() !== ""
+  );
+
+  if (filterEntries.length === 0) {
+    return changes;
+  }
+
+  return changes.filter((change) => {
+    return filterEntries.every(([column, filterValue]) => {
+      const value = change[column];
+      if (value == null) {
+        return filterValue.toLowerCase() === "null" || filterValue.toLowerCase() === "";
+      }
+      return String(value).toLowerCase().includes(filterValue.toLowerCase());
+    });
+  });
+}, [changes, filters]);
+```
+
+<Note>
+  Filtering is case-insensitive and matches partial strings. Type "null" to filter for null values.
+</Note>
+
+### Sorting Logic
+
+Supports intelligent sorting for different data types:
+
+```typescript
+const sortedChanges = useMemo(() => {
+  if (!sortColumn || !sortDirection) {
+    return filteredChanges;
+  }
+
+  return [...filteredChanges].sort((a, b) => {
+    const aValue = a[sortColumn];
+    const bValue = b[sortColumn];
+
+    // Handle null/undefined values
+    if (aValue == null && bValue == null) return 0;
+    if (aValue == null) return 1;
+    if (bValue == null) return -1;
+
+    // Compare values
+    let comparison = 0;
+    if (typeof aValue === "number" && typeof bValue === "number") {
+      comparison = aValue - bValue;
+    } else if (aValue instanceof Date && bValue instanceof Date) {
+      comparison = aValue.getTime() - bValue.getTime();
+    } else {
+      // Try to parse as date (ISO format)
+      const aDate = typeof aValue === "string" ? new Date(aValue) : null;
+      const bDate = typeof bValue === "string" ? new Date(bValue) : null;
+
+      if (aDate && bDate && !isNaN(aDate.getTime()) && !isNaN(bDate.getTime())) {
+        comparison = aDate.getTime() - bDate.getTime();
+      } else {
+        // String comparison
+        comparison = String(aValue).localeCompare(String(bValue));
+      }
+    }
+
+    return sortDirection === "asc" ? comparison : -comparison;
+  });
+}, [filteredChanges, sortColumn, sortDirection]);
+```
+
+<Expandable title="Sorting Behavior by Data Type">
+  <ResponseField name="Numbers" type="number">
+    Sorted numerically (1, 2, 10, 20) not lexicographically.
+  </ResponseField>
+
+  <ResponseField name="Dates" type="Date | string">
+    Date objects and ISO 8601 date strings are parsed and sorted chronologically.
+  </ResponseField>
+
+  <ResponseField name="Strings" type="string">
+    Sorted alphabetically using locale-aware comparison.
+  </ResponseField>
+
+  <ResponseField name="Null values" type="null">
+    Always sorted to the end regardless of sort direction.
+  </ResponseField>
+</Expandable>
+
+### Operation Styling
+
+The `operation` column receives special visual treatment:
+
+```typescript
+const getOperationColor = (operation: string) => {
+  switch (operation.toUpperCase()) {
+    case "INSERT":
+      return "#10b981"; // green
+    case "UPDATE":
+      return "#3b82f6"; // blue
+    case "DELETE":
+      return "#ef4444"; // red
+    default:
+      return "#6b7280"; // gray
+  }
+};
+```
+
+<ResponseField name="INSERT" type="Badge">
+  Green badge (#10b981) for insert operations
+</ResponseField>
+
+<ResponseField name="UPDATE" type="Badge">
+  Blue badge (#3b82f6) for update operations
+</ResponseField>
+
+<ResponseField name="DELETE" type="Badge">
+  Red badge (#ef4444) for delete operations
+</ResponseField>
+
+### Empty State
+
+When the `changes` array is empty:
+
+```typescript
+if (changes.length === 0) {
+  return (
+    <div style={{
+      padding: "3rem",
+      textAlign: "center",
+      color: "#64748b",
+      backgroundColor: "#1a1a1a",
+      borderRadius: "12px",
+      border: "2px solid #fbf0df",
+      marginTop: "2rem",
+    }}>
+      <p style={{ fontSize: "1.2rem" }}>
+        Waiting for database changes...
+      </p>
+      <p style={{ fontSize: "0.9rem", marginTop: "0.5rem" }}>
+        Changes will appear here in real-time
+      </p>
+    </div>
+  );
+}
+```
+
+### Performance Optimizations
+
+The component uses `useMemo` hooks to avoid expensive recalculations:
+
+<AccordionGroup>
+  <Accordion title="Column Memoization">
+    Columns are only recalculated when the `changes` array reference changes, not on every render.
+  </Accordion>
+  
+  <Accordion title="Filter Memoization">
+    Filtering is only recomputed when `changes` or `filters` change, avoiding unnecessary iterations.
+  </Accordion>
+  
+  <Accordion title="Sort Memoization">
+    Sorting is only performed when `filteredChanges`, `sortColumn`, or `sortDirection` change.
+  </Accordion>
+</AccordionGroup>
+
+## App Component
+
+The main application component that manages WebSocket connection and state.
+
+### Import
+
+```typescript
+import { App } from "./App";
+```
+
+### Props
+
+The `App` component takes no props.
+
+```typescript
+export function App() {
+  // Implementation
+}
+```
+
+### Internal State
+
+```typescript
+const [changes, setChanges] = useState<Change[]>([]);
+const [connected, setConnected] = useState(false);
+const [totalChanges, setTotalChanges] = useState(0);
+const wsRef = useRef<WebSocket | null>(null);
+```
+
+<ParamField path="changes" type="Change[]">
+  Array of all database changes received via WebSocket.
+</ParamField>
+
+<ParamField path="connected" type="boolean">
+  Whether the WebSocket connection is currently active.
+</ParamField>
+
+<ParamField path="totalChanges" type="number">
+  Total count of changes as reported by the server.
+</ParamField>
+
+<ParamField path="wsRef" type="React.RefObject<WebSocket | null>">
+  Ref to the WebSocket instance for connection management.
+</ParamField>
+
+### WebSocket Connection Logic
+
+The component implements sophisticated connection management:
+
+```typescript
+useEffect(() => {
+  let ws: WebSocket | null = null;
+  let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  let isMounted = true;
+
+  const connect = () => {
+    // Avoid creating multiple connections
+    if (wsRef.current?.readyState === WebSocket.OPEN || 
+        wsRef.current?.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+
+    // Connect to WebSocket
+    ws = new WebSocket("ws://localhost:3000/ws");
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      if (isMounted) {
+        console.log("Connected to WebSocket server");
+        setConnected(true);
+      }
+    };
+
+    ws.onmessage = (event) => {
+      if (!isMounted) return;
+      
+      const message: WebSocketMessage = JSON.parse(event.data);
+
+      if (message.type === "initial") {
+        setChanges(message.data);
+        setTotalChanges(message.data.length);
+      } else if (message.type === "change") {
+        setChanges((prev) => [...prev, ...message.data]);
+        if (message.total) {
+          setTotalChanges(message.total);
+        }
+      }
+    };
+
+    ws.onclose = (event) => {
+      if (!isMounted) return;
+      
+      setConnected(false);
+      wsRef.current = null;
+
+      // Reconnect after 3 seconds if not intentional close
+      if (event.code !== 1000 && isMounted) {
+        reconnectTimeout = setTimeout(() => {
+          if (isMounted && (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED)) {
+            connect();
+          }
+        }, 3000);
+      }
+    };
+  };
+
+  connect();
+
+  return () => {
+    isMounted = false;
+    if (reconnectTimeout) clearTimeout(reconnectTimeout);
+    if (wsRef.current) wsRef.current.close(1000, "Component unmounting");
+  };
+}, []);
+```
+
+<Note>
+  The component includes automatic reconnection with a 3-second delay and prevents duplicate connections using ref guards.
+</Note>
+
+### Type Definitions
+
+```typescript
+interface Change {
+  operation: string;
+  table: string;
+  [key: string]: any;
+}
+
+interface WebSocketMessage {
+  type: "initial" | "change";
+  data: Change[];
+  total?: number;
+}
+```
+
+### Render Output
+
+```typescript
+return (
+  <div className="app">
+    <h1>📊 PostgreSQL Realtime Monitor</h1>
+    <div style={{
+      display: "flex",
+      gap: "1rem",
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: "1rem",
+    }}>
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "0.5rem",
+        fontSize: "0.9rem",
+      }}>
+        <div style={{
+          width: "10px",
+          height: "10px",
+          borderRadius: "50%",
+          backgroundColor: connected ? "#10b981" : "#ef4444",
+          boxShadow: connected ? "0 0 10px #10b981" : "none",
+          transition: "all 0.3s",
+        }} />
+        <span>{connected ? "Connected" : "Disconnected"}</span>
+      </div>
+      <span style={{ color: "#fbf0df", fontSize: "0.9rem" }}>
+        Total changes: <strong>{totalChanges}</strong>
+      </span>
+    </div>
+    <ChangesTable changes={changes} />
+  </div>
+);
+```
+
+### Connection Status Indicator
+
+<ResponseField name="Connected" type="Visual Indicator">
+  Green pulsing dot (#10b981) with glow effect when connected
+</ResponseField>
+
+<ResponseField name="Disconnected" type="Visual Indicator">
+  Red dot (#ef4444) without glow effect when disconnected
+</ResponseField>
+
+## Common Patterns
+
+### Custom Wrapper with Additional Props
+
+Extend the component with custom functionality:
+
+```typescript
+interface ExtendedChangesTableProps {
+  changes: Change[];
+  onRowClick?: (change: Change) => void;
+  maxHeight?: string;
+}
+
+function ExtendedChangesTable({ 
+  changes, 
+  onRowClick,
+  maxHeight = "600px" 
+}: ExtendedChangesTableProps) {
+  return (
+    <div style={{ maxHeight, overflow: "auto" }}>
+      <ChangesTable changes={changes} />
+    </div>
+  );
+}
+```
+
+### Filtering Changes Before Passing to Component
+
+```typescript
+function FilteredApp() {
+  const [changes, setChanges] = useState<Change[]>([]);
+  const [selectedTable, setSelectedTable] = useState<string | null>(null);
+
+  const filteredChanges = useMemo(() => {
+    if (!selectedTable) return changes;
+    return changes.filter(change => change.table === selectedTable);
+  }, [changes, selectedTable]);
+
+  return (
+    <div>
+      <select onChange={(e) => setSelectedTable(e.target.value || null)}>
+        <option value="">All Tables</option>
+        <option value="public.users">Users</option>
+        <option value="public.products">Products</option>
+      </select>
+      <ChangesTable changes={filteredChanges} />
+    </div>
+  );
+}
+```
+
+### Limiting Displayed Changes
+
+```typescript
+function LimitedChangesView() {
+  const [changes, setChanges] = useState<Change[]>([]);
+  const recentChanges = useMemo(
+    () => changes.slice(-100), // Last 100 changes
+    [changes]
+  );
+
+  return <ChangesTable changes={recentChanges} />;
+}
+```
