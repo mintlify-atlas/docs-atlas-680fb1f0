@@ -1,0 +1,60 @@
+{
+  "projectType": "frontend",
+  "projectName": "PostgreSQL Realtime Monitor",
+  "projectDescription": "Real-time PostgreSQL database change monitoring with Bun, WebSocket, and React",
+  "theme": "aspen",
+  "primaryColor": "#f3d5a3",
+  "lightColor": "#fbf0df",
+  "darkColor": "#c4a574",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get Started",
+        "pages": [
+          "introduction",
+          "quickstart"
+        ]
+      },
+      {
+        "group": "Guides",
+        "pages": [
+          "guides/setup",
+          "guides/configuration",
+          "guides/usage"
+        ]
+      },
+      {
+        "group": "Architecture",
+        "pages": [
+          "architecture/overview",
+          "architecture/websocket",
+          "architecture/database-subscription",
+          "architecture/components"
+        ]
+      },
+      {
+        "group": "API Reference",
+        "pages": [
+          "api/websocket",
+          "api/rest",
+          "api/component-props"
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Real-time PostgreSQL change monitoring (INSERT, UPDATE, DELETE)",
+    "WebSocket-based live updates",
+    "Sortable and filterable table interface",
+    "Dark theme UI with modern design",
+    "Hot Module Reloading for fast development",
+    "PostgreSQL logical replication support"
+  ],
+  "publicApiSurface": [
+    "WebSocket endpoint: ws://localhost:3000/ws",
+    "REST endpoint: GET /api/changes",
+    "React component: <ChangesTable />",
+    "React component: <App />",
+    "Database config: sql (postgres connection)"
+  ]
+}
